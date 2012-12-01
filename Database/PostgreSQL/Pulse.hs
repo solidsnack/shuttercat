@@ -28,7 +28,7 @@ main  = do (a :: STM.TChan ByteString)          <- STM.atomically $ STM.newTChan
            _ <- forkIO . forever $ getBlock a
            _ <- forkIO . forever . STM.atomically $ breakIntoRecords a b
            _ <- forkIO . forever $ send c
-           forever $ delayedBulkTransfer 25000 b c
+           forever $ delayedBulkTransfer 500000 b c
 
 delayedBulkTransfer :: Int -> STM.TChan t -> STM.TChan [t] -> IO ()
 delayedBulkTransfer micros from to = do
@@ -48,7 +48,7 @@ breakIntoRecords i o = do
 
 getBlock :: STM.TChan ByteString -> IO ()
 getBlock o = do
-  bytes <- ByteString.hGet stdin (2^20)
+  bytes <- ByteString.hGet stdin (16)
   hPutStrLn stderr "Got a block."
   when (bytes /= "") $ STM.atomically (STM.writeTChan o bytes)
 
@@ -57,4 +57,5 @@ send i = do
   vecs <- STM.atomically $ STM.readTChan i
   let lists = (Vector.toList <$> vecs)
   mapM_ (mapM_ (ByteString.hPutStrLn stdout)) lists
+  hFlush stdout
 
