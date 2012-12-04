@@ -16,6 +16,7 @@ import           Control.Monad
 import           Data.Monoid
 import           Data.Word
 import           System.IO
+import           System.Exit
 
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString hiding (hPutStrLn)
@@ -32,7 +33,7 @@ go t h = do (blocks, junk, csv, chunks, fuzz) <- context
             forget . forever $ segments fuzz  blocks junk csv
             forget . forever $ timedMessages t       junk
             forget . forever $ timedHandoff t             csv chunks
-            forever          $ send                           chunks
+            forever          $ send h                         chunks
 
 context :: IO ( TChan ByteString, TChan ByteString,
                 TChan ByteString, TChan [ByteString], TVar ByteString )
@@ -42,8 +43,7 @@ context  = atomically $ do
 
 recv :: Handle -> TChan ByteString -> IO ()
 recv h o = do bytes <- ByteString.hGetSome h 16384
-              when (bytes /= "") $ do -- msg "Got a block."
-                                      atomically (writeTChan o bytes)
+              ("" /= bytes) `when` atomically (writeTChan o bytes)
 
 segments :: TVar ByteString
          -> TChan ByteString -> TChan ByteString -> TChan ByteString -> IO ()
@@ -67,10 +67,12 @@ timedHandoff micros from to = do
   forget $ atomically (writeNonEmpty to =<< readAll from)
   threadDelay micros
 
-send :: TChan [ByteString] -> IO ()
-send i = do chunks <- atomically $ readTChan i
-            mapM_ ByteString.putStr chunks
-            hFlush stdout
+send :: Handle -> TChan [ByteString] -> IO ()
+send h i = do chunks <- atomically $ readTChan i
+              mapM_ ByteString.putStr chunks
+              hFlush stdout
+              (eof, closed) <- (,) <$> hIsEOF h <*> hIsClosed h
+              when (eof || closed) exitSuccess
 
 
 writeNonEmpty :: TChan [t] -> [t] -> STM ()
