@@ -24,7 +24,7 @@ import           Data.Either
 
 
 main :: IO ()
-main  = go 100000 stdin
+main  = go 25000 stdin
 
 go :: Int -> Handle -> IO ()
 go t h = do (blocks, chunks) <- atomically ctx
@@ -45,25 +45,19 @@ recv h o = do bytes <- ByteString.hGetSome h 16384
 
 handoff :: Int -> TChan (Maybe t) -> TChan [t] -> IO ()
 handoff micros from to = do
-  t <- getCurrentTime
-  msg "In handoff..."
-  hPutStrLn stderr (show t)
-  recs <- atomically $ readAll from
-  let recs' = catMaybes recs
-  msg ("Read "<>(ByteString.pack . show) (length recs')<>" records.")
   _ <- forkIO $ do
-          atomically $ do not (null recs')   `when` writeTChan to recs'
-                          any isNothing recs `when` writeTChan to []
-          performGC
-  msg "...deciding whether to handoff again."
-  not (any isNothing recs) `when` do msg "Sleeping."
-                                     threadDelay micros
-                                     msg "Handing off."
-                                     handoff micros from to
+         t <- getCurrentTime
+         hPutStrLn stderr (show t)
+         atomically $ do recs <- readAll from
+                         let recs' = catMaybes recs
+                         not (null recs')   `when` writeTChan to recs'
+                         any isNothing recs `when` writeTChan to []
+         performGC
+  threadDelay micros
+  handoff micros from to
 
 send :: TChan [ByteString] -> IO ()
-send i = do msg "In send..."
-            chunks <- atomically $ readTChan i
+send i = do chunks <- atomically $ readTChan i
             mapM_ ByteString.putStr chunks
             hFlush stdout
             (chunks /= []) `when` send i
