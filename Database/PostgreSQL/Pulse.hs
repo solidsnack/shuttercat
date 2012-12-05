@@ -67,7 +67,6 @@ handoff micros from to = do
   msg ("Read "<>(ByteString.pack . show) (sum (length <$> recs))<>" records.")
   _ <- forkIO . atomically $ do not (null recs) `when` writeTChan to recs
                                 any null recs   `when` writeTChan to []
-
   msg "...deciding whether to handoff again."
   not (any null recs) `when` do msg "Sleeping."
                                 threadDelay micros
