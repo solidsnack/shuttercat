@@ -14,6 +14,7 @@ import           Control.Concurrent.STM
 import           Control.Concurrent.STM.TVar
 import           Control.Concurrent.STM.TChan
 import           Control.Monad
+import           Data.Maybe
 import           Data.Monoid
 import           Data.Word
 import           System.IO
@@ -52,7 +53,7 @@ segments :: TVar ByteString -> TChan (Maybe ByteString)
 segments fuzz blocks csv = do
   block <- atomically $ readTChan blocks
   atomically $ maybe (writeTChan csv []) process block
-  segments fuzz blocks csv
+  isJust block `when` segments fuzz blocks csv
  where process b = do leftover <- readTVar fuzz
                       let (results, remainder) = segment (leftover <> b)
                           (_,  good)           = partitionEithers results
@@ -62,10 +63,9 @@ segments fuzz blocks csv = do
 handoff :: Int -> TChan [t] -> TChan [[t]] -> IO ()
 handoff micros from to = do
   recs <- atomically $ readAll from
-  msg ("Read "<>(ByteString.pack . show) (length recs)<>" records.")
-  t    <- async . atomically $ do not (null recs) `when` writeTChan to recs
-                                  any null recs   `when` writeTChan to []
-  wait t
+  _ <- forkIO . atomically $ do not (null recs) `when` writeTChan to recs
+                                any null recs   `when` writeTChan to []
+
   not (any null recs) `when` do threadDelay micros
                                 handoff micros from to
 
