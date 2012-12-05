@@ -10,9 +10,12 @@ import           Control.Concurrent.STM.TChan
 import           Control.Monad
 import           Data.Maybe
 import           Data.Monoid
+import           Data.Time
+import           Data.Time.Clock
 import           Data.Word
-import           System.IO
 import           System.Exit
+import           System.IO
+import           System.Mem
 
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString hiding (hPutStrLn, pack)
@@ -42,12 +45,16 @@ recv h o = do bytes <- ByteString.hGetSome h 16384
 
 handoff :: Int -> TChan (Maybe t) -> TChan [t] -> IO ()
 handoff micros from to = do
+  t <- getCurrentTime
   msg "In handoff..."
+  hPutStrLn stderr (show t)
   recs <- atomically $ readAll from
   let recs' = catMaybes recs
   msg ("Read "<>(ByteString.pack . show) (length recs')<>" records.")
-  _ <- forkIO . atomically $ do not (null recs')   `when` writeTChan to recs'
-                                any isNothing recs `when` writeTChan to []
+  _ <- forkIO $ do
+          atomically $ do not (null recs')   `when` writeTChan to recs'
+                          any isNothing recs `when` writeTChan to []
+          performGC
   msg "...deciding whether to handoff again."
   not (any isNothing recs) `when` do msg "Sleeping."
                                      threadDelay micros
