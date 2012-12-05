@@ -9,6 +9,7 @@ module Database.PostgreSQL.Pulse where
 import           Control.Applicative
 import           Control.Arrow (first)
 import           Control.Concurrent
+import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Concurrent.STM.TVar
 import           Control.Concurrent.STM.TChan
@@ -19,64 +20,61 @@ import           System.IO
 import           System.Exit
 
 import           Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString hiding (hPutStrLn)
+import qualified Data.ByteString as ByteString hiding (hPutStrLn, pack)
 import qualified Data.ByteString.Char8 as ByteString
 import           Data.Either
 
 
 main :: IO ()
-main  = go 500000 stdin
+main  = go 250000 stdin
 
 go :: Int -> Handle -> IO ()
-go t h = do (blocks, junk, csv, chunks, fuzz) <- context
-            forget . forever $ recv h         blocks
-            forget . forever $ segments fuzz  blocks junk csv
-            forget . forever $ timedMessages t       junk
-            forget . forever $ timedHandoff t             csv chunks
-            forever          $ send h                         chunks
-
-context :: IO ( TChan ByteString, TChan ByteString,
-                TChan ByteString, TChan [ByteString], TVar ByteString )
-context  = atomically $ do
-  (,,,,) <$> newTChan <*> newTChan <*> newTChan <*> newTChan <*> newTVar ""
+go t h = do (blocks, csv, chunks, fuzz) <- atomically ctx
+            a <- async $ recv h         blocks
+            b <- async $ segments fuzz  blocks csv
+            c <- async $ handoff t             csv chunks
+            d <- async $ send                      chunks
+            mapM_ wait [a, b, c, d]
+            exitSuccess
+ where ctx = (,,,) <$> newTChan <*> newTChan <*> newTChan <*> newTVar ""
 
 
-recv :: Handle -> TChan ByteString -> IO ()
+recv :: Handle -> TChan (Maybe ByteString) -> IO ()
 recv h o = do bytes <- ByteString.hGetSome h 16384
-              ("" /= bytes) `when` atomically (writeTChan o bytes)
-
-segments :: TVar ByteString
-         -> TChan ByteString -> TChan ByteString -> TChan ByteString -> IO ()
-segments fuzz blocks junk csv = atomically $ do
-  bytes <- readTChan blocks
-  ("" /= bytes) `when` do
-    leftover <- readTVar fuzz
-    let (results, remainder) = segment (leftover <> bytes)
-        (bad, good)          = partitionEithers results
-    mapM_ (writeTChan csv)  good
-    mapM_ (writeTChan junk) bad
-    writeTVar fuzz remainder
-
-timedMessages :: Int -> TChan ByteString -> IO ()
-timedMessages micros junk = do
-  forget (maybeList "Bad CSV:" =<< atomically (readAll junk))
-  threadDelay micros
-
-timedHandoff :: Int -> TChan t -> TChan [t] -> IO ()
-timedHandoff micros from to = do
-  forget $ atomically (writeNonEmpty to =<< readAll from)
-  threadDelay micros
-
-send :: Handle -> TChan [ByteString] -> IO ()
-send h i = do chunks <- atomically $ readTChan i
-              mapM_ ByteString.putStr chunks
-              hFlush stdout
+              ("" /= bytes) `when` atomically (writeTChan o (Just bytes))
               (eof, closed) <- (,) <$> hIsEOF h <*> hIsClosed h
-              when (eof || closed) exitSuccess
+              if eof || closed then atomically (writeTChan o Nothing)
+                               else recv h o
 
 
-writeNonEmpty :: TChan [t] -> [t] -> STM ()
-writeNonEmpty chan x = not (null x) `when` writeTChan chan x
+segments :: TVar ByteString -> TChan (Maybe ByteString)
+                            -> TChan [ByteString] -> IO ()
+segments fuzz blocks csv = do
+  block <- atomically $ readTChan blocks
+  atomically $ maybe (writeTChan csv []) process block
+  segments fuzz blocks csv
+ where process b = do leftover <- readTVar fuzz
+                      let (results, remainder) = segment (leftover <> b)
+                          (_,  good)           = partitionEithers results
+                      writeTChan csv good
+                      writeTVar fuzz remainder
+
+handoff :: Int -> TChan [t] -> TChan [[t]] -> IO ()
+handoff micros from to = do
+  recs <- atomically $ readAll from
+  msg ("Read "<>(ByteString.pack . show) (length recs)<>" records.")
+  t    <- async . atomically $ do not (null recs) `when` writeTChan to recs
+                                  any null recs   `when` writeTChan to []
+  wait t
+  not (any null recs) `when` do threadDelay micros
+                                handoff micros from to
+
+send :: TChan [[ByteString]] -> IO ()
+send i = do chunks <- atomically $ readTChan i
+            (mapM_ . mapM_) ByteString.putStr chunks
+            hFlush stdout
+            (chunks /= []) `when` send i
+
 
 readAll :: TChan t -> STM [t]
 readAll chan = do h <- tryReadTChan chan
@@ -86,13 +84,6 @@ readAll chan = do h <- tryReadTChan chan
 
 msg :: ByteString -> IO ()
 msg  = ByteString.hPutStrLn stderr
-
-maybeList :: ByteString -> [ByteString] -> IO ()
-maybeList _      [   ] = return ()
-maybeList remark stuff = msg remark >> mapM_ msg stuff >> hFlush stderr
-
-forget :: IO () -> IO ()
-forget io = () <$ forkIO io
 
 
 -- | Stateful CSV recognizer. Takes sequences of whole records from the input
