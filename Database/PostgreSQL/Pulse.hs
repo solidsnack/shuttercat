@@ -62,15 +62,21 @@ segments fuzz blocks csv = do
 
 handoff :: Int -> TChan [t] -> TChan [[t]] -> IO ()
 handoff micros from to = do
+  msg "In handoff..."
   recs <- atomically $ readAll from
+  msg ("Read "<>(ByteString.pack . show) (sum (length <$> recs))<>" records.")
   _ <- forkIO . atomically $ do not (null recs) `when` writeTChan to recs
                                 any null recs   `when` writeTChan to []
 
-  not (any null recs) `when` do threadDelay micros
+  msg "...deciding whether to handoff again."
+  not (any null recs) `when` do msg "Sleeping."
+                                threadDelay micros
+                                msg "Handing off."
                                 handoff micros from to
 
 send :: TChan [[ByteString]] -> IO ()
-send i = do chunks <- atomically $ readTChan i
+send i = do msg "In send..."
+            chunks <- atomically $ readTChan i
             (mapM_ . mapM_) ByteString.putStr chunks
             hFlush stdout
             (chunks /= []) `when` send i
