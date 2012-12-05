@@ -24,7 +24,7 @@ import           Data.Either
 
 
 main :: IO ()
-main  = go 250000 stdin
+main  = go 100000 stdin
 
 go :: Int -> Handle -> IO ()
 go t h = do (blocks, chunks) <- atomically ctx
