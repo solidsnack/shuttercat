@@ -8,19 +8,16 @@ import           Control.Concurrent.STM
 import           Control.Concurrent.STM.TVar
 import           Control.Concurrent.STM.TChan
 import           Control.Monad
+import           Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString hiding (hPutStrLn, pack)
+import qualified Data.ByteString.Char8 as ByteString
 import           Data.Maybe
-import           Data.Monoid
 import           Data.Time
-import           Data.Time.Clock
-import           Data.Word
+import           Data.Time.Clock ()
 import           System.Exit
 import           System.IO
 import           System.Mem
 
-import           Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString hiding (hPutStrLn, pack)
-import qualified Data.ByteString.Char8 as ByteString
-import           Data.Either
 
 
 main :: IO ()
@@ -35,7 +32,6 @@ go t h = do (blocks, chunks) <- atomically ctx
             exitSuccess
  where ctx = (,) <$> newTChan <*> newTChan
 
-
 recv :: Handle -> TChan (Maybe ByteString) -> IO ()
 recv h o = do bytes <- ByteString.hGetSome h 16384
               ("" /= bytes) `when` atomically (writeTChan o (Just bytes))
@@ -45,16 +41,16 @@ recv h o = do bytes <- ByteString.hGetSome h 16384
 
 handoff :: Int -> TChan (Maybe t) -> TChan [t] -> IO ()
 handoff micros from to = do
-  _ <- forkIO $ do
-         t <- getCurrentTime
-         hPutStrLn stderr (show t)
-         atomically $ do recs <- readAll from
-                         let recs' = catMaybes recs
-                         not (null recs')   `when` writeTChan to recs'
-                         any isNothing recs `when` writeTChan to []
-         performGC
+  recs <- atomically $ readAll from
+  _ <- forkIO $ do t <- getCurrentTime
+                   hPutStrLn stderr (show t)
+                   let recs' = catMaybes recs
+                   atomically $ do
+                     not (null recs')   `when` writeTChan to recs'
+                     any isNothing recs `when` writeTChan to []
+                   performGC
   threadDelay micros
-  handoff micros from to
+  not (any isNothing recs) `when` handoff micros from to
 
 send :: TChan [ByteString] -> IO ()
 send i = do chunks <- atomically $ readTChan i
