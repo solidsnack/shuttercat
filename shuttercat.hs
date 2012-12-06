@@ -61,16 +61,22 @@ send i = do chunks <- atomically $ readTChan i
             (chunks /= []) `when` send i
 
 
-fullLines :: TVar ByteString -> TChan (Maybe ByteString)
+segmented :: (ByteString -> (ByteString, ByteString))
+          -> TVar ByteString -> TChan (Maybe ByteString)
                              -> TChan (Maybe ByteString) -> IO ()
-fullLines scrap i o = do
+segmented split scrap i o = do
   continue <- atomically (maybe stop step =<< readTChan i)
   when continue (fullLines scrap i o)
+  -- NB: if the STM function handled the recursion, it would block the
+  -- runtime. (Only tested with single threaded runtime.)
  where stop = False <$ writeTChan o Nothing
        step "" = return True
-       step b  = do a <- readTVar scrap
-                    let (full, a') = ByteString.breakEnd (== 0x0a) (a <> b)
-                    writeTChan o (Just full)
-                    writeTVar scrap a'
+       step b  = do (full, rest) <- split . (<>b) <$> readTVar scrap
+                    when (full /= "") (writeTChan o (Just full))
+                    writeTVar scrap rest
                     return True
+
+fullLines :: TVar ByteString -> TChan (Maybe ByteString)
+                             -> TChan (Maybe ByteString) -> IO ()
+fullLines  = segmented (ByteString.breakEnd (== 0x0a))
 
