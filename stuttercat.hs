@@ -7,11 +7,13 @@ import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Concurrent.STM.TVar
 import           Control.Concurrent.STM.TChan
+import           Control.Exception
 import           Control.Monad
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString hiding (hPutStrLn, pack)
 import qualified Data.ByteString.Char8 as ByteString
 import           Data.Maybe
+import           Data.Monoid
 import           Data.Time
 import           Data.Time.Clock ()
 import           System.Exit
@@ -25,6 +27,8 @@ main  = go 25000 stdin
 
 go :: Int -> Handle -> IO ()
 go t h = do (blocks, chunks) <- atomically ctx
+            me <- myThreadId
+            msg (ByteString.pack ("me: "<>show me))
             a <- async $ recv h     blocks
             b <- async $ handoff t  blocks chunks
             c <- async $ send              chunks
@@ -41,16 +45,22 @@ recv h o = do bytes <- ByteString.hGetSome h 16384
 
 handoff :: Int -> TChan (Maybe t) -> TChan [t] -> IO ()
 handoff micros from to = do
-  recs <- atomically $ readAll from
-  _ <- forkIO $ do t <- getCurrentTime
-                   hPutStrLn stderr (show t)
-                   let recs' = catMaybes recs
-                   atomically $ do
-                     not (null recs')   `when` writeTChan to recs'
-                     any isNothing recs `when` writeTChan to []
-                   performGC
-  threadDelay micros
-  not (any isNothing recs) `when` handoff micros from to
+  me <- myThreadId
+  msg (ByteString.pack ("handoff: "<>show me))
+  Control.Exception.catch (forever (step me)) skip
+ where skip    = const (return ()) :: AsyncException -> IO ()
+       step me = forkIO (work me) *> threadDelay micros
+       work me = do t <- getCurrentTime
+                    hPutStrLn stderr (show t)
+                    kill <- atomically $ do
+                              recs <- readAll from
+                              let recs' = catMaybes recs
+                                  done  = any isNothing recs
+                              not (null recs') `when` writeTChan to recs'
+                              done `when` writeTChan to []
+                              return done
+                    kill `when` do killThread me
+                    performGC
 
 send :: TChan [ByteString] -> IO ()
 send i = do chunks <- atomically $ readTChan i
