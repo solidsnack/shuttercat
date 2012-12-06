@@ -19,16 +19,14 @@ import           Data.Maybe
 --
 --   Experimentally, tick rates of up to 40Hz are maintained stabley by this
 --   routine.
-transfer :: Int -> TChan (Maybe t) -> TChan [t] -> IO ()
-transfer micros from to = transfer' micros (return ()) (return ()) from to
-
--- | Like transfer but with hooks run in the transferring thread, one before
---   and one after the transfer takes place.
-transfer' :: Int -> IO () -> IO () -> TChan (Maybe t) -> TChan [t] -> IO ()
-transfer' micros before after from to = do
+--
+--   The two 'IO' parameters allow one to schedule actions to be run before and
+--   after each tick. (Set them to @return ()@ if no hooks are needed.)
+transfer :: Int -> IO () -> IO () -> TChan (Maybe t) -> TChan [t] -> IO ()
+transfer micros before after from to = do
   me <- myThreadId
-  let loop = forkIO (step me) *> threadDelay micros
-  catchJust (guard . (== ThreadKilled)) (forever loop) (const $ return ())
+  let go = forever (forkIO (step me) *> threadDelay micros)
+  catchJust (guard . (== ThreadKilled)) go (const $ return ())
  where step main = do before
                       ended <- atomically (sendAll from to)
                       when ended (killThread main)
