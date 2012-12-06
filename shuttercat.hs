@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+import           Prelude hiding (lines)
 import           Control.Applicative
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
