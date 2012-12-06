@@ -27,8 +27,6 @@ main  = go 25000 stdin
 
 go :: Int -> Handle -> IO ()
 go t h = do (blocks, chunks) <- atomically ctx
-            me <- myThreadId
-            msg (ByteString.pack ("me: "<>show me))
             a <- async $ recv h     blocks
             b <- async $ handoff t  blocks chunks
             c <- async $ send              chunks
@@ -46,7 +44,6 @@ recv h o = do bytes <- ByteString.hGetSome h 16384
 handoff :: Int -> TChan (Maybe t) -> TChan [t] -> IO ()
 handoff micros from to = do
   me <- myThreadId
-  msg (ByteString.pack ("handoff: "<>show me))
   Control.Exception.catch (forever (step me)) skip
  where skip    = const (return ()) :: AsyncException -> IO ()
        step me = forkIO (work me) *> threadDelay micros
