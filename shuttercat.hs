@@ -7,10 +7,11 @@ import           Control.Concurrent.STM
 import           Control.Monad
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString hiding (hPutStrLn, pack)
-import qualified Data.ByteString.Char8 as ByteString hiding (breakEnd)
+import qualified Data.ByteString.Char8 as ByteString hiding (breakEnd, foldl')
 import           Data.Monoid
 import           Data.Time
 import           Data.Time.Clock ()
+import           Data.Word
 import           System.Exit
 import           System.IO
 import           System.Mem
@@ -19,16 +20,18 @@ import           Control.Concurrent.STM.ShutterChan
 
 
 main :: IO ()
-main  = lines 250000 stdin
+main  = csv 250000 stdin
+ where lines = records atLastFullLine
+       csv   = records csvSplit
 
-lines :: Int -> Handle -> IO ()
-lines t h = do (blocks, lines, chunks, scrap) <- atomically ctx
-               a <- async $ recv h           blocks
-               b <- async $ fullLines scrap  blocks lines
-               c <- async $ handoff t               lines chunks
-               d <- async $ send                          chunks
-               mapM_ wait [a, b, c, d]
-               exitSuccess
+records :: (ByteString -> (ByteString, ByteString)) -> Int -> Handle -> IO ()
+records f t h = do (bytes, segments, chunks, scrap) <- atomically ctx
+                   a <- async $ recv h           bytes
+                   b <- async $ segment f scrap  bytes segments
+                   c <- async $ handoff t              segments chunks
+                   d <- async $ send                            chunks
+                   mapM_ wait [a, b, c, d]
+                   exitSuccess
  where ctx = (,,,) <$> newTChan <*> newTChan <*> newTChan <*> newTVar ""
 
 octets :: Int -> Handle -> IO ()
@@ -61,12 +64,12 @@ send i = do chunks <- atomically $ readTChan i
             (chunks /= []) `when` send i
 
 
-segmented :: (ByteString -> (ByteString, ByteString))
-          -> TVar ByteString -> TChan (Maybe ByteString)
-                             -> TChan (Maybe ByteString) -> IO ()
-segmented split scrap i o = do
+segment :: (ByteString -> (ByteString, ByteString))
+        -> TVar ByteString -> TChan (Maybe ByteString)
+                           -> TChan (Maybe ByteString) -> IO ()
+segment split scrap i o = do
   continue <- atomically (maybe stop step =<< readTChan i)
-  when continue (fullLines scrap i o)
+  when continue (segment split scrap i o)
   -- NB: if the STM function handled the recursion, it would block the
   -- runtime. (Only tested with single threaded runtime.)
  where stop = False <$ writeTChan o Nothing
@@ -76,7 +79,17 @@ segmented split scrap i o = do
                     writeTVar scrap rest
                     return True
 
-fullLines :: TVar ByteString -> TChan (Maybe ByteString)
-                             -> TChan (Maybe ByteString) -> IO ()
-fullLines  = segmented (ByteString.breakEnd (== 0x0a))
+atLastFullLine :: ByteString -> (ByteString, ByteString)
+atLastFullLine  = ByteString.breakEnd (== 0x0a)
+
+-- Handles CSV records, which are delimited by newlines but allows quoting.
+-- Thus we scan for balanced quotes.
+csvSplit :: ByteString -> (ByteString, ByteString)
+csvSplit b = ByteString.splitAt index b
+ where (_, _, index) = ByteString.foldl' step (False, 0, 0) b
+
+step :: (Bool, Int, Int) -> Word8 -> (Bool, Int, Int)
+step (quoted, index, last) 0x22 = (not quoted, index+1, last)    -- '"'
+step (False,  index, _   ) 0x0a = (False,      index+1, index+1) -- '\n'
+step (quoted, index, last) _    = (quoted,     index+1, last)
 
