@@ -44,9 +44,8 @@ recv h o = do bytes <- ByteString.hGetSome h 16384
 handoff :: Int -> TChan (Maybe t) -> TChan [t] -> IO ()
 handoff micros from to = do
   me <- myThreadId
-  Control.Exception.catch (forever (step me)) skip
- where skip    = const (return ()) :: AsyncException -> IO ()
-       step me = forkIO (work me) *> threadDelay micros
+  catchJust (guard . (== ThreadKilled)) (forever $ step me) (const $ return ())
+ where step me = forkIO (work me) *> threadDelay micros
        work me = do t <- getCurrentTime
                     hPutStrLn stderr (show t)
                     kill <- atomically $ do
