@@ -18,29 +18,30 @@ import           Control.Concurrent.STM.ShutterChan
 
 
 main :: IO ()
-main  = cat 250000 stdin
+main  = lines 250000 stdin
 
-cat :: Int -> Handle -> IO ()
-cat t h = do (blocks, lines, chunks, scrap) <- atomically ctx
-             a <- async $ recv h           blocks
-             b <- async $ fullLines scrap  blocks lines
-             c <- async $ handoff t               lines chunks
-             d <- async $ send                          chunks
-             mapM_ wait [a, b, c, d]
-             exitSuccess
+lines :: Int -> Handle -> IO ()
+lines t h = do (blocks, lines, chunks, scrap) <- atomically ctx
+               a <- async $ recv h           blocks
+               b <- async $ fullLines scrap  blocks lines
+               c <- async $ handoff t               lines chunks
+               d <- async $ send                          chunks
+               mapM_ wait [a, b, c, d]
+               exitSuccess
  where ctx = (,,,) <$> newTChan <*> newTChan <*> newTChan <*> newTVar ""
 
-dd :: Int -> Handle -> IO ()
-dd t h = do (blocks, chunks) <- atomically ctx
-            a <- async $ recv h     blocks
-            b <- async $ handoff t  blocks chunks
-            c <- async $ send              chunks
-            mapM_ wait [a, b, c]
-            exitSuccess
+octets :: Int -> Handle -> IO ()
+octets t h = do (blocks, chunks) <- atomically ctx
+                a <- async $ recv h     blocks
+                b <- async $ handoff t  blocks chunks
+                c <- async $ send              chunks
+                mapM_ wait [a, b, c]
+                exitSuccess
  where ctx = (,) <$> newTChan <*> newTChan
 
 handoff t  = transfer t now performGC
  where now = (hPutStrLn stderr . show) =<< getCurrentTime
+
 
 recv :: Handle -> TChan (Maybe ByteString) -> IO ()
 recv h o = do bytes <- ByteString.hGetSome h 16384
