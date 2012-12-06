@@ -1,4 +1,3 @@
-#!/usr/bin/env runhaskell
 {-# LANGUAGE OverloadedStrings #-}
 
 import           Control.Applicative
@@ -20,6 +19,7 @@ import           System.Exit
 import           System.IO
 import           System.Mem
 
+import           Control.Concurrent.STM.ShutterChan
 
 
 main :: IO ()
@@ -27,12 +27,14 @@ main  = go 25000 stdin
 
 go :: Int -> Handle -> IO ()
 go t h = do (blocks, chunks) <- atomically ctx
-            a <- async $ recv h     blocks
-            b <- async $ handoff t  blocks chunks
-            c <- async $ send              chunks
+            a <- async $ recv h  blocks
+            b <- async $ handoff blocks chunks
+            c <- async $ send           chunks
             mapM_ wait [a, b, c]
             exitSuccess
- where ctx = (,) <$> newTChan <*> newTChan
+ where ctx     = (,) <$> newTChan <*> newTChan
+       handoff = transfer' t now performGC
+       now     = (hPutStrLn stderr . show) =<< getCurrentTime
 
 recv :: Handle -> TChan (Maybe ByteString) -> IO ()
 recv h o = do bytes <- ByteString.hGetSome h 16384
@@ -41,34 +43,11 @@ recv h o = do bytes <- ByteString.hGetSome h 16384
               if eof || closed then atomically (writeTChan o Nothing)
                                else recv h o
 
-handoff :: Int -> TChan (Maybe t) -> TChan [t] -> IO ()
-handoff micros from to = do
-  me <- myThreadId
-  catchJust (guard . (== ThreadKilled)) (forever $ step me) (const $ return ())
- where step me = forkIO (work me) *> threadDelay micros
-       work me = do t <- getCurrentTime
-                    hPutStrLn stderr (show t)
-                    kill <- atomically $ do
-                              recs <- readAll from
-                              let recs' = catMaybes recs
-                                  done  = any isNothing recs
-                              not (null recs') `when` writeTChan to recs'
-                              done `when` writeTChan to []
-                              return done
-                    kill `when` do killThread me
-                    performGC
-
 send :: TChan [ByteString] -> IO ()
 send i = do chunks <- atomically $ readTChan i
             mapM_ ByteString.putStr chunks
             hFlush stdout
             (chunks /= []) `when` send i
-
-
-readAll :: TChan t -> STM [t]
-readAll chan = do h <- tryReadTChan chan
-                  case h of Just h  -> (h:) <$> readAll chan
-                            Nothing -> return []
 
 
 msg :: ByteString -> IO ()
