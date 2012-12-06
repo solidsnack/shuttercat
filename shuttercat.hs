@@ -43,6 +43,9 @@ octets t h = do (blocks, chunks) <- atomically ctx
 handoff t  = transfer t now performGC
  where now = (hPutStrLn stderr . show) =<< getCurrentTime
 
+msg :: ByteString -> IO ()
+msg  = ByteString.hPutStrLn stderr
+
 
 recv :: Handle -> TChan (Maybe ByteString) -> IO ()
 recv h o = do bytes <- ByteString.hGetSome h 16384
@@ -50,6 +53,13 @@ recv h o = do bytes <- ByteString.hGetSome h 16384
               (eof, closed) <- (,) <$> hIsEOF h <*> hIsClosed h
               if eof || closed then atomically (writeTChan o Nothing)
                                else recv h o
+
+send :: TChan [ByteString] -> IO ()
+send i = do chunks <- atomically $ readTChan i
+            mapM_ ByteString.putStr chunks
+            hFlush stdout
+            (chunks /= []) `when` send i
+
 
 fullLines :: TVar ByteString -> TChan (Maybe ByteString)
                              -> TChan (Maybe ByteString) -> IO ()
@@ -63,14 +73,4 @@ fullLines scrap i o = do
                     writeTChan o (Just full)
                     writeTVar scrap a'
                     return True
-
-send :: TChan [ByteString] -> IO ()
-send i = do chunks <- atomically $ readTChan i
-            mapM_ ByteString.putStr chunks
-            hFlush stdout
-            (chunks /= []) `when` send i
-
-
-msg :: ByteString -> IO ()
-msg  = ByteString.hPutStrLn stderr
 
