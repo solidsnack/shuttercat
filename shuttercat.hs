@@ -30,14 +30,12 @@ main  = csv 25000 stdin
 records :: (ByteString -> (ByteString, ByteString)) -> Int -> Handle -> IO ()
 records f t h = do (segmented, batched, scrap) <- atomically ctx
                    a <- async $ recv f h scrap  segmented
-                   b <- async $ handoff t       segmented batched
+                   b <- async $ handoff         segmented batched
                    c <- async $ send                      batched
                    mapM_ wait [a, b, c]
                    exitSuccess
  where ctx = (,,) <$> newTChan <*> newTChan <*> newTVar ""
-
-handoff t  = transfer t now performGC
- where now = (hPutStrLn stderr . show) =<< getCurrentTime
+       handoff = transfer t (return ()) performGC
 
 msg :: ByteString -> IO ()
 msg  = ByteString.hPutStrLn stderr
