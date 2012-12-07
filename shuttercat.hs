@@ -26,8 +26,8 @@ import           Control.Concurrent.STM.ShutterChan
 main :: IO ()
 main  = run (cmd <$> style <*> millis <*> above <*> below, info)
  where cmd style millis above below
-         = style millis (ByteString.pack <$> above)
-                        (ByteString.pack <$> below) stdin
+         = style (1000*millis) (ByteString.pack <$> above)
+                               (ByteString.pack <$> below) stdin
        info = defTI { termName = "shuttercat", version = "(unversioned)" }
 
 style :: Term (Int -> Maybe ByteString -> Maybe ByteString -> Handle -> IO ())
