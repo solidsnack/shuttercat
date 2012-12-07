@@ -28,7 +28,8 @@ main  = run (cmd <$> style <*> millis <*> above <*> below, info)
  where cmd style millis above below
          = style (1000*millis) (ByteString.pack <$> above)
                                (ByteString.pack <$> below) stdin
-       info = defTI { termName = "shuttercat", version = "(unversioned)" }
+       info = defTI { termName = "shuttercat", version = "(unversioned)"
+                    , termDoc = "buffer and send input at timed intervals" }
 
 style :: Term (Int -> Maybe ByteString -> Maybe ByteString -> Handle -> IO ())
 style  = value $ vFlag lines
