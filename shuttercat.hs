@@ -22,7 +22,7 @@ import           Control.Concurrent.STM.ShutterChan
 
 
 main :: IO ()
-main  = csv 25000 stdin
+main  = lines 25000 stdin
  where lines  = records atLastFullLine
        csv    = records csvSplit
        octets = records (,"")
