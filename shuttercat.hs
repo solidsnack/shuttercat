@@ -65,7 +65,7 @@ send i = do chunks <- atomically $ readTChan i
 atLastFullLine :: ByteString -> (ByteString, ByteString)
 atLastFullLine  = ByteString.breakEnd (== 0x0a)
 
--- Handles CSV records, which are delimited by newlines but allows quoting.
+-- Handles CSV records, which are delimited by newlines but allow quoting.
 -- Thus we scan for balanced quotes.
 csvSplit :: ByteString -> (ByteString, ByteString)
 csvSplit b = ByteString.splitAt index b
