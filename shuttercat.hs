@@ -18,26 +18,56 @@ import           System.Exit
 import           System.IO
 import           System.Mem
 
+import           System.Console.CmdTheLine
+
 import           Control.Concurrent.STM.ShutterChan
 
 
 main :: IO ()
-main  = csv 25000 stdin
+main  = run (cmd <$> style <*> millis <*> above <*> below, info)
+ where cmd style millis above below
+         = style millis (ByteString.pack <$> above)
+                        (ByteString.pack <$> below) stdin
+       info = defTI { termName = "shuttercat", version = "(unversioned)" }
+
+style :: Term (Int -> Maybe ByteString -> Maybe ByteString -> Handle -> IO ())
+style  = value $ vFlag lines
+ [(lines,  opt "nl"  "Send full lines (the default)."),
+  (csv,    opt "csv" "Send full CSV records (lines, accounting for quoting)."),
+  (octets, opt "raw" "Send whatever bytes are ready at each tick.")]
  where lines  = records atLastFullLine
        csv    = records csvSplit
        octets = records (,"")
+       opt s desc = (optInfo [s]) {optDoc=desc, optSec="RECORD HANDLING"}
 
-records :: (ByteString -> (ByteString, ByteString)) -> Int -> Handle -> IO ()
-records f t h = do (segmented, batched, scrap) <- atomically ctx
-                   a <- async $ recv f h scrap  segmented
-                   b <- async $ handoff t       segmented batched
-                   c <- async $ send                      batched
-                   mapM_ wait [a, b, c]
-                   exitSuccess
+millis :: Term Int
+millis  = value . opt 25 $ (optInfo [ "ms" ])
+                           { optDoc  = "Cycle time in milliseconds."
+                           , optName = "MILLIS" }
+
+above :: Term (Maybe String)
+above  = value . opt Nothing $ (optInfo [ "above" ])
+                               { optDoc  = "Lines placed above each chunk."
+                               , optName = "TEXT" }
+
+below :: Term (Maybe String)
+below  = value . opt Nothing $ (optInfo [ "below" ])
+                               { optDoc  = "Lines placed below each chunk."
+                               , optName = "TEXT" }
+
+
+records :: (ByteString -> (ByteString, ByteString))
+        -> Int -> Maybe ByteString -> Maybe ByteString -> Handle -> IO ()
+records split millis above below h = do
+  (segmented, batched, scrap) <- atomically ctx
+  a <- async $ recv split h scrap  segmented
+  b <- async $ handoff             segmented batched
+  c <- async $ send above below              batched
+  mapM_ wait [a, b, c]
+  exitSuccess
  where ctx = (,,) <$> newTChan <*> newTChan <*> newTVar ""
+       handoff = transfer millis (return ()) performGC
 
-handoff t  = transfer t now performGC
- where now = (hPutStrLn stderr . show) =<< getCurrentTime
 
 msg :: ByteString -> IO ()
 msg  = ByteString.hPutStrLn stderr
@@ -55,12 +85,15 @@ recv f h v o = go
                (eof, closed) <- (,) <$> hIsEOF h <*> hIsClosed h
                if eof || closed then atomically (writeTChan o Nothing) else go
 
-send :: TChan [ByteString] -> IO ()
-send i = do chunks <- atomically $ readTChan i
-            mapM_ ByteString.putStr chunks
-            hFlush stdout
-            (chunks /= []) `when` send i
-
+send :: Maybe ByteString -> Maybe ByteString -> TChan [ByteString] -> IO ()
+send above below i = do chunks <- atomically $ readTChan i
+                        (chunks /= []) `when` do
+                          maybe (return ()) (ByteString.hPutStrLn h) above
+                          mapM_ (ByteString.hPutStr h) chunks
+                          maybe (return ()) (ByteString.hPutStrLn h) below
+                          hFlush h
+                          send above below i
+                       where h = stdout
 
 atLastFullLine :: ByteString -> (ByteString, ByteString)
 atLastFullLine  = ByteString.breakEnd (== 0x0a)
