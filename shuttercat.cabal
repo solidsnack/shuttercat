@@ -36,7 +36,7 @@ library
   exposed-modules             : Control.Concurrent.STM.ShutterChan
 
 
-executable                      taskl
+executable                      shuttercat
   default-language            : Haskell98
   main-is                     : shuttercat.hs
   if flag(no-cli)
