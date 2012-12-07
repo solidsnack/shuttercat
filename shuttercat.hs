@@ -41,9 +41,12 @@ style  = value $ vFlag lines
        opt s desc = (optInfo [s]) {optDoc=desc, optSec="RECORD HANDLING"}
 
 millis :: Term Int
-millis  = value . opt 25 $ (optInfo [ "ms" ])
-                           { optDoc  = "Cycle time in milliseconds."
-                           , optName = "MILLIS" }
+millis  = check . value . opt 25 $ (optInfo [ "ms" ])
+                                   { optDoc  = "Cycle time in milliseconds."
+                                   , optName = "MILLIS" }
+ where check = ret . (pos <$>)
+       pos t | t > 0     = pure t
+             | otherwise = msgFail "Please enter only positive cycle times."
 
 above :: Term (Maybe String)
 above  = value . opt Nothing $ (optInfo [ "above" ])
