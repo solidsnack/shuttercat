@@ -64,10 +64,10 @@ records :: (ByteString -> (ByteString, ByteString))
         -> Int -> Maybe ByteString -> Maybe ByteString -> Handle -> IO ()
 records split millis above below h = do
   (segmented, batched, scrap) <- atomically ctx
-  a <- async $ recv split h scrap  segmented
-  b <- async $ handoff             segmented batched
+  _ <- async $ recv split h scrap  segmented
+  _ <- async $ handoff             segmented batched
   c <- async $ send above below              batched
-  mapM_ wait [a, b, c]
+  wait c
   exitSuccess
  where ctx = (,,) <$> newTChan <*> newTChan <*> newTVar ""
        handoff = transfer millis (return ()) performGC
