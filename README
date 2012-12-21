@@ -1,0 +1,32 @@
+NAME
+       shuttercat - buffer and send input at timed intervals
+
+SYNOPSIS
+       shuttercat [OPTION]...
+
+OPTIONS
+       --above=TEXT
+           Lines placed above each chunk.
+
+       --below=TEXT
+           Lines placed below each chunk.
+
+       --help[=FMT] (default=pager)
+           Show this help in format FMT (pager, plain, or groff).
+
+       --ms=MILLIS (absent=25)
+           Cycle time in milliseconds.
+
+       --version
+           Show version information.
+
+RECORD HANDLING
+       --csv
+           Send full CSV records (lines, accounting for quoting).
+
+       --nl
+           Send full lines (the default).
+
+       --raw
+           Send whatever bytes are ready at each tick.
+
