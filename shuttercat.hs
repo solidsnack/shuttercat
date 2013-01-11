@@ -1,3 +1,4 @@
+#!/usr/bin/env runhaskell
 {-# LANGUAGE OverloadedStrings
            , TupleSections
   #-}
