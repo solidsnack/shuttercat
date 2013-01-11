@@ -25,14 +25,15 @@ import           Control.Concurrent.STM.ShutterChan
 
 
 main :: IO ()
-main  = run (cmd <$> style <*> millis <*> above <*> below, info)
- where cmd style millis above below
-         = style (1000*millis) (ByteString.pack <$> above)
-                               (ByteString.pack <$> below) stdin
+main  = run (cmd <$> style <*> timed <*> millis <*> above <*> below, info)
+ where cmd style timed millis above below
+         = style timed (1000*millis) (ByteString.pack <$> above)
+                                     (ByteString.pack <$> below) stdin
        info = defTI { termName = "shuttercat", version = "(unversioned)"
                     , termDoc = "buffer and send input at timed intervals" }
 
-style :: Term (Int -> Maybe ByteString -> Maybe ByteString -> Handle -> IO ())
+style ::
+  Term (Bool -> Int -> Maybe ByteString -> Maybe ByteString -> Handle -> IO ())
 style  = value $ vFlag lines
  [(lines,  opt "nl"  "Send full lines (the default)."),
   (csv,    opt "csv" "Send full CSV records (lines, accounting for quoting)."),
@@ -60,18 +61,27 @@ below  = value . opt Nothing $ (optInfo [ "below" ])
                                { optDoc  = "Lines placed below each chunk."
                                , optName = "TEXT" }
 
+timed :: Term Bool
+timed  = value . flag $ (optInfo [ "timed" ])
+                        { optDoc  = "Print timestamp to STDERR at each tick." }
+
 
 records :: (ByteString -> (ByteString, ByteString))
-        -> Int -> Maybe ByteString -> Maybe ByteString -> Handle -> IO ()
-records split millis above below h = do
-  (segmented, batched, scrap) <- atomically ctx
-  _ <- async $ recv split h scrap  segmented
-  _ <- async $ handoff             segmented batched
-  c <- async $ send above below              batched
+        -> Bool -> Int -> Maybe ByteString -> Maybe ByteString -> Handle
+        -> IO ()
+records split timed millis above below h = do
+  (segmented, batched) <- atomically ctx
+  _ <- async $ reader  segmented
+  _ <- async $ handoff segmented batched
+  c <- async $ writer            batched
   wait c
   exitSuccess
- where ctx = (,,) <$> newTChan <*> newTChan <*> newTVar ""
-       handoff = transfer millis (return ()) performGC
+ where ctx     = (,) <$> newTChan <*> newTChan
+       handoff = transfer millis tick performGC
+       tick | timed     = msg . ByteString.pack . show =<< getCurrentTime
+            | otherwise = return ()
+       reader  = recv split h
+       writer  = send above below
 
 
 msg :: ByteString -> IO ()
@@ -79,16 +89,17 @@ msg  = ByteString.hPutStrLn stderr
 
 
 recv :: (ByteString -> (ByteString, ByteString))
-     -> Handle -> TVar ByteString
-     -> TChan (Maybe ByteString) -> IO ()
-recv f h v o = go
- where go = do bytes <- ByteString.hGetSome h 16384
-               when (bytes /= "") . atomically $ do
-                 (full, rest) <- f . (<>bytes) <$> readTVar v
-                 when (full /= "") (writeTChan o (Just full))
-                 writeTVar v rest
-               (eof, closed) <- (,) <$> hIsEOF h <*> hIsClosed h
-               if eof || closed then atomically (writeTChan o Nothing) else go
+     -> Handle -> TChan (Maybe ByteString) -> IO ()
+recv split h o = go ""
+ where go b  = do bytes <- ByteString.hGetSome h 16384
+                  if bytes == "" then rec b
+                                 else do let (full, rest) = split (b<>bytes)
+                                         when (full /= "") (write (Just full))
+                                         rec rest
+       rec b = do done <- (||) <$> hIsEOF h <*> hIsClosed h
+                  if done then write Nothing else go b
+       write = atomically . writeTChan o
+
 
 send :: Maybe ByteString -> Maybe ByteString -> TChan [ByteString] -> IO ()
 send above below i = do chunks <- atomically $ readTChan i
